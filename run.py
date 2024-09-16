@@ -37,7 +37,8 @@ def main():
     log_parser = log_paser.LogParser(args.file_to_parse)
     # log_parser.parse_events('2018-10-11 15:50:42.284', '2018-10-11 15:50:42.299')
     log_parser.parse_events()
-    log_parser.show_summary()
+    log_parser.generate_results()
+    # log_parser.show_summary()
 
 
 if __name__ == "__main__":

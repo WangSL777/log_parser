@@ -39,6 +39,8 @@ class LogParser:
         self.rmq_recv_msg_dist_runnable_process_queue_size_events = []
         self.thread_count = {}
 
+        self.results_bag = {}
+
     def parse_events(self, start_datetime=None, end_datetime=None):
         """Parse events.
 
@@ -239,35 +241,69 @@ class LogParser:
         events = reversed(self.events) if last else self.events
         return next((e['timestamp'] for e in events if e['type'] == event_type), None)
 
-    def get_transfer_total_size(self, event_type, last=False):
-        """Get timestamp."""
-        events = reversed(self.events) if last else self.events
-        return next((e['total_size'] for e in events if e['type'] == event_type), None)
+    def generate_results(self):
+        """Generate results and store in results_bag."""
+        self.results_bag = {
+            'Parsed file': self.log_path,
+            'Event count': len(self.events),
+            'Error event count': len(self.error_events),
+            'Error event type and count:': self.error_events_type_count,
+            'Error event with exception trace count': len(self.error_event_with_trace),
+            'Parsed log duration': f'{self.events_time_delta}',
 
-    def get_speed_metrics(self):
-        """Get speed metrics."""
-        self.parse_events()
-        metrics = []
-        for e in self.events:
-            if e['type'] == 'transfer_in_progress':
-                metrics.append({
-                    'timestamp': e['timestamp'],
-                    'speed': e['speed'],
-                    'mean_speed': e['mean_speed'],
-                    'transfer_name': e['transfer_name'],
-                    'transfer_size': e['transfer_size']
-                })
-        return metrics
+            'Order requests count': len(self.order_request_events),
+            'Accepted order requests count': len(self.accepted_order_request_events),
+            'Accepted order requests status type and count': self.accepted_order_request_type_count,
+            'Rejected order requests count': len(self.reject_order_request_events),
+            'Rejected order requests status type and count': self.reject_order_request_type_count,
 
-    def get_transfer_request_failure_events(self):
-        """Get speed metrics."""
-        self.parse_events()
-        transfer_request_failure_events = []
+            'Average order request rate': f'{len(self.order_request_events) / self.events_time_delta.total_seconds()} requests per second'
+        }
+        process_times = [x["process_time_ms"] for x in self.order_request_events]
+        self.results_bag['Average order request process time'] = f'{statistics.mean(process_times)} ms'
+        self.results_bag['Min order request process time'] = f'{min(process_times)} ms'
+        self.results_bag['Max order request process time'] = f'{max(process_times)} ms'
 
-        for e in self.events:
-            if e['type'] == 'transfer_failure':
-                transfer_request_failure_events.append(e['transfer_failure_details'])
-        return transfer_request_failure_events
+        # sell or buy
+        self.results_bag['Sell requests count'] = len(self.sell_request_events)
+        process_times = [x["process_time_ms"] for x in self.sell_request_events]
+        self.results_bag['Average sell request rate'] = f'{len(self.sell_request_events) / self.events_time_delta.total_seconds()} requests per second'
+        self.results_bag['Min sell request rate'] = f'{min(process_times)} ms'
+        self.results_bag['Max sell request rate'] = f'{max(process_times)} ms'
+
+        self.results_bag['Buy requests count'] = len(self.buy_request_events)
+        process_times = [x["process_time_ms"] for x in self.buy_request_events]
+        self.results_bag['Average buy request rate'] = f'{len(self.buy_request_events) / self.events_time_delta.total_seconds()} requests per second'
+        self.results_bag['Min buy request process time'] = f'{min(process_times)} ms'
+        self.results_bag['Max buy request process time'] = f'{max(process_times)} ms'
+
+        # symbol distribution
+        self.results_bag['Order requests symbol and count'] = self.order_request_symbol_count
+
+        # unique ip address
+        self.results_bag['Order requests client IP and count'] = self.order_request_client_ip_count
+
+        # process thread
+        self.results_bag['Process thread count'] = self.thread_count
+
+        # Message Queue Stats
+        self.results_bag['RMQ sent event count'] = len(self.rmq_send_events)
+        queue_size = [x["rmq_send_queue_size"] for x in self.rmq_send_queue_size_events]
+        self.results_bag['Average RMQ sent queue size'] = statistics.mean(queue_size)
+        self.results_bag['Min RMQ sent queue size'] = min(queue_size)
+        self.results_bag['Max RMQ sent queue size'] = max(queue_size)
+
+        self.results_bag['RMQ receive event count'] = len(self.rmq_recv_events)
+        queue_size = [x["rmq_recv_callback_process_queue_size"] for x in self.rmq_recv_callback_process_queue_size_events]
+        self.results_bag['Average RMQ receive callback process queue size'] = statistics.mean(queue_size)
+        self.results_bag['Min RMQ receive callback process queue size'] = min(queue_size)
+        self.results_bag['Max RMQ receive callback process queue size'] = max(queue_size)
+        queue_size = [x["rmq_recv_msg_dist_runnable_process_queue_size"] for x in self.rmq_recv_msg_dist_runnable_process_queue_size_events]
+        self.results_bag['Average RMQ receive msg dist runnable process queue size'] = statistics.mean(queue_size)
+        self.results_bag['Min RMQ receive msg dist runnable process queue size'] = min(queue_size)
+        self.results_bag['Max RMQ receive msg dist runnable process queue size'] = max(queue_size)
+
+        log.info(f'{json.dumps(self.results_bag, indent=4)}')
 
     def show_summary(self):
         """Show log parsing summary."""
@@ -297,6 +333,7 @@ class LogParser:
         summary.append(f'Average sell request process time: {statistics.mean(process_times)} ms')
         summary.append(f'Min sell request process time: {min(process_times)} ms')
         summary.append(f'Max sell request process time: {max(process_times)} ms')
+
         summary.append((f'\nBuy requests count: {len(self.buy_request_events)}'))
         summary.append(f'Average buy request rate: {len(self.buy_request_events) / self.events_time_delta.total_seconds()} requests per second')
         process_times = [x["process_time_ms"] for x in self.buy_request_events]
