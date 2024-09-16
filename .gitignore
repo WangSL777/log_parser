@@ -1,0 +1,5 @@
+.idea
+generates
+venv
+.env
+__pycache__
