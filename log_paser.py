@@ -37,6 +37,7 @@ class LogParser:
         self.rmq_recv_events = []
         self.rmq_recv_callback_process_queue_size_events = []
         self.rmq_recv_msg_dist_runnable_process_queue_size_events = []
+        self.thread_count = {}
 
     def parse_events(self, start_datetime=None, end_datetime=None):
         """Parse events.
@@ -116,6 +117,12 @@ class LogParser:
                     self.rmq_recv_callback_process_queue_size_events.append(event)
                 elif 'type' in event and event['type'] == 'rmq_msg_dist_runnable_process_queue_size':
                     self.rmq_recv_msg_dist_runnable_process_queue_size_events.append(event)
+
+                # thread
+                if event['thread'] in self.thread_count:
+                    self.thread_count[event['thread']] += 1
+                else:
+                    self.thread_count[event['thread']] = 1
 
         self.events_time_delta = self.events[-1]['timestamp'] - self.events[0]['timestamp']
 
@@ -319,5 +326,8 @@ class LogParser:
         summary.append(f'Average RMQ receive msg dist runnable process queue size: {statistics.mean(queue_size)}')
         summary.append(f'Min RMQ receive msg dist runnable process queue size: {min(queue_size)}')
         summary.append(f'Max RMQ receive msg dist runnable process queue size: {max(queue_size)}')
+
+        # unique ip address
+        summary.append((f'\nProcess thread count: {json.dumps(self.thread_count, indent=4)}'))
         log.info('\n'.join(summary))
 
