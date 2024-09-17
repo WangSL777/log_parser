@@ -35,6 +35,6 @@ The python script will create `generate` folder under current directory. After r
 - log_parser.log: the log file for this script
 
 ### Example generated files
-- [This](https://mega.nz/file/U2lBUaSY#Yck7HsY8Z46ib8AUP_IRg7i_R3zJd6QOoSaVR5Q-5K8) is a video to show how to run it
+- [This](https://mega.nz/file/U2lBUaSY#Yck7HsY8Z46ib8AUP_IRg7i_R3zJd6QOoSaVR5Q-5K8) is a video to show how to run it (Suggest using Chrome to watch it online)
 - [These](https://mega.nz/folder/539wnLiK#sOkxUrS9XQ_jXwX5fUVT3A) are sample files that the script generates
 
