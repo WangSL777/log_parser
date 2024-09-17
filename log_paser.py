@@ -1,13 +1,17 @@
-"""MEGA app log parser.
-
-some functions are copied and modified from megacmd_logparser.py in act project
-"""
+"""Log parser."""
 import json
 import re
 import statistics
 from datetime import datetime
 
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
+import plotly.subplots as sp
+
 import logger
+import paths
 
 log = logger.get_logger(__file__)
 
@@ -42,11 +46,12 @@ class LogParser:
         self.results_bag = {}
 
     def parse_events(self, start_datetime=None, end_datetime=None):
-        """Parse events.
+        """Parse events. If start_datatime and end_datetime is provided, only parsing the filtered the log lines.
 
         Note:
             start_datetime and end_datetime needs to be in example "2018-10-11 15:50:42.284" format
         """
+        # get full events
         with open(self.log_path, 'r', encoding='utf-8') as f:
             while True:
                 line = f.readline()
@@ -61,9 +66,11 @@ class LogParser:
                     self.full_events[-1]['error_trace'].append(line)
                 else:
                     self.full_events[-1]['error_trace'] = [line]
+
         start_dt = datetime.strptime(start_datetime, "%Y-%m-%d %H:%M:%S.%f") if start_datetime else None
         end_dt = datetime.strptime(end_datetime, "%Y-%m-%d %H:%M:%S.%f") if end_datetime else None
         for event in self.full_events:
+            # filter by start_datetime and end_datatime
             if (not start_dt or start_dt <= event['timestamp']) and (not end_dt or end_dt >= event['timestamp']):
                 self.events.append(event)
                 if event['level'] == 'ERROR':
@@ -129,7 +136,7 @@ class LogParser:
         self.events_time_delta = self.events[-1]['timestamp'] - self.events[0]['timestamp']
 
     def _extract_event(self, line):
-        """Exact event."""
+        """Exact info from event."""
         parsed_log = {'parsed_status': 'good'}
         log_pattern = re.compile(r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}.\d{3})"
                                  r"\[(?P<epoch_time>\d+)\] \| (?P<level>\S+)\s*\| (?P<thread>\S+)\s*\| "
@@ -151,6 +158,7 @@ class LogParser:
         if 'POST /api/v3/order' in message:
             parsed_log['type'] = 'order_request'
 
+            # httpStatus
             pattern = r".*httpStatus:(?P<http_status>\d+).*"
             match = re.search(pattern, message)
             if match:
@@ -159,6 +167,7 @@ class LogParser:
                 log.warning(f'No order request http_status: {line}')
                 parsed_log['http_status'] = 'No http_status'
 
+            # status
             pattern = r".*\"status\":\"(?P<status>\w+)\".*"
             match = re.search(pattern, message)
             if match:
@@ -175,6 +184,7 @@ class LogParser:
                 else:
                     log.warning(f'Cannot find reject code and reject message: {line}')
 
+            # process time
             pattern = r".*proc:(?P<process_time>\S+).*"
             match = re.search(pattern, message)
             if match:
@@ -236,13 +246,8 @@ class LogParser:
 
         return parsed_log
 
-    def get_timestamp(self, event_type, last=False):
-        """Get timestamp."""
-        events = reversed(self.events) if last else self.events
-        return next((e['timestamp'] for e in events if e['type'] == event_type), None)
-
     def generate_results(self):
-        """Generate results and store in results_bag."""
+        """Generate results and save into results file."""
         self.results_bag = {
             'Parsed file': self.log_path,
             'Event count': len(self.events),
@@ -303,68 +308,52 @@ class LogParser:
         self.results_bag['Min RMQ receive msg dist runnable process queue size'] = min(queue_size)
         self.results_bag['Max RMQ receive msg dist runnable process queue size'] = max(queue_size)
 
-        log.info(f'{json.dumps(self.results_bag, indent=4)}')
+        with open(paths.PASER_RESULT_FILE, 'w') as file:
+            json.dump(self.results_bag, file, indent=4)
+        log.info(f'Log file parsed result is stored at: {paths.PASER_RESULT_FILE}')
 
-    def show_summary(self):
-        """Show log parsing summary."""
-        summary = []
-        summary.append(f'Parsed file: {self.log_path}')
-        summary.append(f'Event count: {len(self.events)}')
-        summary.append(f'Error event count: {len(self.error_events)}')
-        summary.append((f'Error event type and count: {json.dumps(self.error_events_type_count, indent=4)}'))
-        summary.append(f'Error event with exception trace count: {len(self.error_event_with_trace)}')
-        summary.append(f'Parsed log duration: {self.events_time_delta}')
-        summary.append((f'\nOrder requests count: {len(self.order_request_events)}'))
-        summary.append((f'Accepted order requests count: {len(self.accepted_order_request_events)}'))
-        summary.append((f'Accepted order requests status type and count: {json.dumps(self.accepted_order_request_type_count, indent=4)}'))
-        summary.append((f'Rejected order requests count: {len(self.reject_order_request_events)}'))
-        summary.append((f'Rejected order requests status type and count: {json.dumps(self.reject_order_request_type_count, indent=4, sort_keys=True)}'))
+    def generate_figures(self):
+        """Generate figure on specific metrics."""
+        fig = sp.make_subplots(rows=1,
+                               cols=1,
+                               subplot_titles=['Order request and rejected order request counts over time'],
+                               specs=[
+                                   [{"type": "xy"}]
+                               ])
+        colors = px.colors.qualitative.Plotly + px.colors.qualitative.Alphabet
+        order_req_df = pd.DataFrame(self.order_request_events)
+        order_req_df['timestamp'] = order_req_df['timestamp'].dt.floor('s')
+        grouped_order_req_df = order_req_df.groupby('timestamp').size().reset_index(name='order_req_count')
+        reject_order_req_df = pd.DataFrame(self.reject_order_request_events)
+        reject_order_req_df['timestamp'] = reject_order_req_df['timestamp'].dt.floor('s')
+        grouped_reject_order_req_df = reject_order_req_df.groupby('timestamp').size().reset_index(name='reject_order_req_count')
 
-        summary.append(f'\nAverage order request rate: {len(self.order_request_events) / self.events_time_delta.total_seconds()} requests per second')
-        process_times = [x["process_time_ms"] for x in self.order_request_events]
-        summary.append(f'Average order request process time: {statistics.mean(process_times)} ms')
-        summary.append(f'Min order request process time: {min(process_times)} ms')
-        summary.append(f'Max order request process time: {max(process_times)} ms')
+        plot_df = pd.merge(grouped_order_req_df, grouped_reject_order_req_df, on='timestamp', how='outer')
 
-        # sell or buy
-        summary.append((f'\nSell requests count: {len(self.sell_request_events)}'))
-        summary.append(f'Average sell request rate: {len(self.sell_request_events) / self.events_time_delta.total_seconds()} requests per second')
-        process_times = [x["process_time_ms"] for x in self.sell_request_events]
-        summary.append(f'Average sell request process time: {statistics.mean(process_times)} ms')
-        summary.append(f'Min sell request process time: {min(process_times)} ms')
-        summary.append(f'Max sell request process time: {max(process_times)} ms')
+        color = colors.pop(0)
+        fig.add_trace(go.Scatter(x=plot_df['timestamp'], y=plot_df['order_req_count'].interpolate(), mode='lines',
+                                 marker={'color': color}, name='order request count',
+                                 hovertext=[f"{y} order request at {x}" for x, y in
+                                            zip(plot_df['timestamp'], plot_df['order_req_count'])],
+                                 hoverinfo="text"),
+                      row=1, col=1)
+        color = colors.pop(0)
+        fig.add_trace(go.Scatter(x=plot_df['timestamp'], y=plot_df['reject_order_req_count'].interpolate(), mode='lines',
+                                 marker={'color': color}, name='rejected order request count',
+                                 hovertext=[f"{y} rejected order request at {x}" for x, y in
+                                            zip(plot_df['timestamp'], plot_df['reject_order_req_count'])],
+                                 hoverinfo="text"),
+                      row=1, col=1)
 
-        summary.append((f'\nBuy requests count: {len(self.buy_request_events)}'))
-        summary.append(f'Average buy request rate: {len(self.buy_request_events) / self.events_time_delta.total_seconds()} requests per second')
-        process_times = [x["process_time_ms"] for x in self.buy_request_events]
-        summary.append(f'Average buy request process time: {statistics.mean(process_times)} ms')
-        summary.append(f'Min buy request process time: {min(process_times)} ms')
-        summary.append(f'Max buy request process time: {max(process_times)} ms')
+        fig.update_yaxes(title_text='Order Request Count', row=1, col=1)
+        fig.update_yaxes(title_text='Rejected Order Request Count', row=2, col=1)
 
-        # symbol distribution
-        summary.append((f'\nOrder requests symbol and count: {json.dumps(self.order_request_symbol_count, indent=4)}'))
+        fig.write_html(paths.FIGURE_HTML)
+        pio.write_image(fig, paths.FIGURE_PNG, width=1920, height=1080)
 
-        # unique ip address
-        summary.append((f'\nOrder requests client IP and count: {json.dumps(self.order_request_client_ip_count, indent=4)}'))
-
-        # Message Queue Stats
-        summary.append((f'\nRMQ sent event count: {len(self.rmq_send_events)}'))
-        queue_size = [x["rmq_send_queue_size"] for x in self.rmq_send_queue_size_events]
-        summary.append(f'Average RMQ sent queue size: {statistics.mean(queue_size)}')
-        summary.append(f'Min RMQ sent queue size: {min(queue_size)}')
-        summary.append(f'Max RMQ sent queue size: {max(queue_size)}')
-
-        summary.append((f'\nRMQ receive event count: {len(self.rmq_recv_events)}'))
-        queue_size = [x["rmq_recv_callback_process_queue_size"] for x in self.rmq_recv_callback_process_queue_size_events]
-        summary.append(f'Average RMQ receive callback process queue size: {statistics.mean(queue_size)}')
-        summary.append(f'Min RMQ receive callback process queue size: {min(queue_size)}')
-        summary.append(f'Max RMQ receive callback process queue size: {max(queue_size)}')
-        queue_size = [x["rmq_recv_msg_dist_runnable_process_queue_size"] for x in self.rmq_recv_msg_dist_runnable_process_queue_size_events]
-        summary.append(f'Average RMQ receive msg dist runnable process queue size: {statistics.mean(queue_size)}')
-        summary.append(f'Min RMQ receive msg dist runnable process queue size: {min(queue_size)}')
-        summary.append(f'Max RMQ receive msg dist runnable process queue size: {max(queue_size)}')
-
-        # unique ip address
-        summary.append((f'\nProcess thread count: {json.dumps(self.thread_count, indent=4)}'))
-        log.info('\n'.join(summary))
+    def show_results(self):
+        """Show parsing results."""
+        with open(paths.PASER_RESULT_FILE, 'r') as file:
+            results = file.read()
+            log.info(f'parsed result: \n{results}')
 
